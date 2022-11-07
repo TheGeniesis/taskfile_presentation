@@ -1,0 +1,42 @@
+# Helper task included in other dirs
+version: 3
+
+tasks:
+  helm:
+    desc: Download helm with helmfile binary and install plugins
+    cmds:
+      - curl https://get.helm.sh/helm-{{.HELM_VERSION}}-{{OS}}-{{ARCH}}.tar.gz | tar xvz -C ./
+      - mv {{OS}}-{{ARCH}}/helm ./
+      - chmod 755 helm
+      - rm -rf {{OS}}-{{ARCH}}
+      - curl -Lo ./helmfile https://github.com/roboll/helmfile/releases/download/{{.HELMFILE_VERSION}}/helmfile_{{OS}}_{{ARCH}}
+      - chmod +x ./helmfile
+      - ./helm plugin install https://github.com/databus23/helm-diff || true
+
+  k8s:
+    desc: Download kubectl binary
+    cmds:
+      - curl -LO https://storage.googleapis.com/kubernetes-release/release/{{.KUBERNETES_VERSION}}/bin/{{OS}}/{{ARCH}}/kubectl
+      - chmod +x ./kubectl
+
+  vault:
+    desc: Download vault binary
+    cmds:
+      - curl https://releases.hashicorp.com/vault/{{.VAULT_VERSION}}/vault_{{.VAULT_VERSION}}_{{OS}}_{{ARCH}}.zip -o vault.zip
+      - unzip -o vault.zip
+      - rm vault.zip
+      - chmod +x vault
+
+  terraform:
+    desc: Download terraform binary
+    cmds:
+      - curl https://releases.hashicorp.com/terraform/{{.TERRAFORM_VERSION}}/terraform_{{.TERRAFORM_VERSION}}_{{OS}}_{{ARCH}}.zip -o terraform.zip
+      - unzip -o terraform.zip
+      - rm terraform.zip
+      - chmod +x terraform
+
+  kind:
+    desc: Install KIND
+    cmds:
+      - curl -Lo ./kind "https://github.com/kubernetes-sigs/kind/releases/download/{{.KIND_VERSION}}/kind-{{OS}}-{{ARCH}}"
+      - chmod +x ./kind

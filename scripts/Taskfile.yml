@@ -1,0 +1,16 @@
+version: 3
+
+tasks:
+  default:
+    cmds:
+      - task -l
+
+  script:one:
+    desc: Script to show in includes
+    cmds:
+      - echo "It works"
+
+  script:two:
+    desc: Script to show in includes
+    cmds:
+      - echo "It works"

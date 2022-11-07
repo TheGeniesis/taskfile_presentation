@@ -1,0 +1,138 @@
+version: 3
+
+# dotenv: ['.env']
+# dotenv: ['.env', '{{.ENV}}/.env', '{{.HOME}}/.env']
+
+includes:
+  my_scr: ./scripts/
+  install: ../Taskfile-install.yml
+
+vars:
+  K8S_IMAGE: kindest/node:v1.19.7
+  CLUSTER_NAME: nonprod-kind
+  HELM_VERSION: v3.6.2
+  KUBERNETES_VERSION: v1.19.7
+  KIND_VERSION: v0.11.1
+  HELMFILE_VERSION: v0.139.9
+  HELMFILE_BASE_COMMAND: ./helmfile --helm-binary=./helm
+  VAULT_VERSION: 1.8.0
+  K8S_NAMESPACE: project-automation-local
+  K8S_SA: gitlab-ci
+
+  MAIN_PATH:
+    sh: echo "$(pwd)/../.."
+
+# env:
+#   ENV_VAR: my_global_var
+
+tasks:
+  default:
+    cmds:
+      - task -l
+
+  check:env:
+    desc: Check if .env "works"
+    cmds:
+      - echo $ENV_VAR
+
+  # Structure
+  build:image:
+    desc: Build basic application image
+    cmds:
+      - DOCKER_BUILDKIT=1 docker build --build-arg SERVICE_NAME=project_automation_service --build-arg SERVICE_PORT=2222 --build-arg KEY_NAME=./keys/phoenix.rsa.pub --tag project_automation_service:unreleased --file {{.MAIN_PATH}}/automation/Dockerfile {{.MAIN_PATH}}/
+      - DOCKER_BUILDKIT=1 docker build --build-arg SERVICE_NAME=project_airflow_service --build-arg SERVICE_PORT=2223 --build-arg KEY_NAME=./keys/phoenix.rsa.pub --tag project_airflow_service:unreleased --file {{.MAIN_PATH}}/airflow/Dockerfile {{.MAIN_PATH}}/
+      - cd {{.MAIN_PATH}}/frontend && yarn install --frozen-lockfile --production --cache-folder .yarn-cache
+      - cd {{.MAIN_PATH}}/frontend && npm run build
+      - DOCKER_BUILDKIT=1 docker build --tag project_frontend:unreleased --file {{.MAIN_PATH}}/frontend/Dockerfile {{.MAIN_PATH}}/frontend
+
+  # Local variable example
+  kubeconfig:
+    desc: Prepare envrc file with kubeconfig path.
+    cmds:
+      - ./kind get kubeconfig --name={{.CLUSTER_NAME}} > kind_kubeconfig
+      - echo "export KUBECONFIG={{.KUBE_KIND_CONF_DIR}}/kind_kubeconfig" > .envrc
+      - echo "export GIT_TAG=unreleased" >> .envrc
+      - direnv allow
+    vars:
+      KUBE_KIND_CONF_DIR:
+        sh: pwd
+
+  # Execute one task inside another
+  rebuild:
+    desc: Rebuild cluster and monitoring stack
+    cmds:
+    - task: cluster:delete
+    - task: cluster:create
+    - task: kubeconfig
+    - task: deploy:ingress
+
+  # Preconditions
+  check:context:
+    desc: Check if the current context is the correct one
+    preconditions:
+      - sh: "[ $(./kubectl config current-context) == {{.CLUSTER_NAME}} ]"
+        msg: "Wrong context! Use '{{.CLUSTER_NAME}}'"
+
+  # include other taskfiles
+
+  cluster:create:
+    desc: KIND cluster create
+    cmds:
+      - ./kind create cluster --name {{.CLUSTER_NAME}} --image {{.K8S_IMAGE}} --config kind-cluster.yaml
+
+  cluster:delete:
+    desc: KIND cluster delete
+    cmds:
+      - ./kind delete cluster --name {{.CLUSTER_NAME}}
+
+  deploy:sync:
+    desc: Load all charts
+    cmds:
+      - "{{.HELMFILE_BASE_COMMAND}} --environment=local sync"
+
+  deploy:apply:
+    desc: Deploy all charts
+    cmds:
+      - "{{.HELMFILE_BASE_COMMAND}} --environment=local apply"
+
+  deploy:ingress:
+    desc: Deploy ingress nginx for kind
+    cmds:
+      - "./kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml"
+
+  start:
+    desc: Prepare and run application in kubernetes
+    cmds:
+      - task: build:image
+      - task: load-image-kind
+      - task: deploy:apply
+
+  load-image-kind:
+    desc: Put image in kind
+    cmds:
+      - ./kind load docker-image project_automation_service:unreleased
+      - ./kind load docker-image project_frontend:unreleased
+      - ./kind load docker-image project_airflow_service:unreleased
+
+  forward:frontend:
+    desc: Enable port forwarding for frontend app
+    cmds:
+      - ./kubectl -n {{.K8S_NAMESPACE}} port-forward service/project-automation-frontend 8081:80
+
+  k8s:create:sa:
+    desc: Create service account for gitlab-ci user
+    cmds:
+      - sh scripts/generate_sa.sh {{.K8S_NAMESPACE}} {{.K8S_SA}}
+
+  k8s:create:rb:
+    desc: Create rolebinding for gitlab-ci user
+    cmds:
+      - ./kubectl create rolebinding {{.K8S_SA}}-admin --clusterrole=admin --namespace={{.K8S_NAMESPACE}} --serviceaccount={{.K8S_NAMESPACE}}:{{.K8S_SA}}
+
+  k8s:create:kubeconfig:
+    desc: Generate kubeconfig for gitlab-ci user
+    cmds:
+      - sh scripts/generate_kubeconfig.sh {{.K8S_NAMESPACE}} {{.K8S_SA}} {{.PATH}}/kubectl
+    vars:
+      PATH:
+        sh: pwd
